@@ -381,7 +381,7 @@ void ServoController::resolve_fields() {
     if (config_.quick_stop_decel == 0 && motion_->shutdown_cycles() == 0) {  // a mode with its own controlled stop needs none
         ETHERCAT_LOG_WARN("servo",
                           "slave {}: quick_stop_decel not set -> STOP is an uncontrolled disable-voltage coast (safe, but a "
-                          "load-holding axis will drift/drop); set quick_stop_decel (0x6085) for a controlled ramp-stop",
+                          "load-holding axis will drift/drop); set quick_stop_decel_rpm_per_s (0x6085) for a controlled ramp-stop",
                           s);
     }
 }
@@ -514,7 +514,7 @@ void ServoController::select_motion_mode() {
     const double accel_cps2 = static_cast<double>(rpm_to_device_velocity(accel_rpm_s, config_.counts_per_rev, config_.gear_ratio));
     const double vmax_cps =
         static_cast<double>(rpm_to_device_velocity(config_.max_motor_speed_rpm, config_.counts_per_rev, config_.gear_ratio));
-    motion_ = std::make_unique<CyclicPositionMode>(dt, accel_cps2, vmax_cps);
+    motion_ = std::make_unique<CyclicPositionMode>(dt, accel_cps2, vmax_cps, config_.quick_stop_decel);
     ETHERCAT_LOG_INFO("servo",
                       "slave {}: control_mode csp (master-side trapezoid, accel {} counts/s^2, vmax {} counts/s)",
                       config_.slave_id,
@@ -1246,6 +1246,15 @@ std::size_t ServoController::sdo_read(std::uint16_t index, std::uint8_t sub, std
                     std::to_string(sub) + ")");
     }
     return master_->sdo_read(config_.slave_id, index, sub, out);
+}
+
+void ServoController::sdo_write(std::uint16_t index, std::uint8_t sub, std::span<const std::byte> data) {
+    const std::shared_lock<std::shared_mutex> lk(api_mutex_);
+    if (master_ == nullptr || rt_runner_ == nullptr) {
+        throw Error("ServoController::sdo_write: not running -- call while operational (object " + std::to_string(index) + ":" +
+                    std::to_string(sub) + ")");
+    }
+    master_->sdo_write(config_.slave_id, index, sub, data);
 }
 
 double ServoController::rated_current_amps() const noexcept {
