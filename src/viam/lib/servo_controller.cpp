@@ -538,6 +538,8 @@ const char* to_string(HomingFail fail) noexcept {
             return "cancelled by stop or disable";
         case HomingFail::DriveFault:
             return "the drive faulted during the run";
+        case HomingFail::NotOperational:
+            return "the drive was not operational when the run was to start";
     }
     return "?";
 }
@@ -622,6 +624,12 @@ std::uint16_t ServoController::step_lifecycle(CycleContext& ctx, Status status, 
     }
     if (batch.set_velocity.has_value()) {
         motion_->set_velocity(batch.set_velocity->velocity);
+    }
+    // A homing request that reaches a cycle outside Operational (a fault landed between the caller's
+    // check and this cycle) must be failed, not dropped with the batch: its caller is parked on the
+    // published state and the run's timeout only counts inside the Homing state.
+    if (batch.start_homing.has_value() && !std::holds_alternative<Operational>(lifecycle_)) {
+        publish_homing_result(HomingFail::NotOperational);
     }
 
     if (std::holds_alternative<Init>(lifecycle_)) {
@@ -1262,16 +1270,24 @@ bool ServoController::await_homing() {
     }
 }
 
-void ServoController::finish_homing(HomingFail fail) noexcept {
+void ServoController::publish_homing_result(HomingFail fail) noexcept {
     state_.homing_fail.store(static_cast<std::uint8_t>(fail), std::memory_order_relaxed);
     state_.homing_state.store(static_cast<std::uint8_t>(fail == HomingFail::None ? HomingState::Done : HomingState::Failed),
                               std::memory_order_release);
+    bump_wake();  // home() is parked on this state, not on a clock
+}
+
+void ServoController::finish_homing(HomingFail fail) noexcept {
+    publish_homing_result(fail);
     homing_cycles_ = 0;
     homing_echo_wait_ = 0;
     motion_->reset();  // no command survives a home: the run ends in a hold at the new origin
+    // Back through the enable ladder, not straight to Operational: the drive may still be running
+    // mode 6, and only the ladder waits for 0x6061 to echo the mode home() restores. Until it does,
+    // the not-operational path keeps the set-points tracking the actual position, so re-energizing
+    // at the new zero cannot lunge. Same path a cleared fault takes.
     lifecycle_ = Enabling{};
     mode_echo_wait_ = 0;
-    bump_wake();
 }
 
 bool ServoController::home(const HomingParams& params) {
@@ -1321,8 +1337,10 @@ bool ServoController::home(const HomingParams& params) {
         release_motion_slot(g);
         throw;
     }
-    select_drive_mode(commanded_cia402_mode());
+    // Free the slot before the restore, which can throw on a refused SDO: a home that attained and
+    // then failed to restore the mode must not also leave the slot held, refusing every later move.
     release_motion_slot(g);
+    select_drive_mode(commanded_cia402_mode());
     ETHERCAT_LOG_INFO("servo", "slave {}: homing {}", config_.slave_id, attained ? "attained" : homing_error());
     return attained;
 }

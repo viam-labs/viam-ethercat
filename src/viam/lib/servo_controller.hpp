@@ -89,7 +89,7 @@ struct ControllerState {
 // The drive's homing procedure as seen by the API: idle until the first run, then running while the
 // RT loop presents the start bit, and terminal after it.
 enum class HomingState : std::uint8_t { Idle, Running, Done, Failed };
-enum class HomingFail : std::uint8_t { None, ModeNotAdopted, DriveError, Timeout, Cancelled, DriveFault };
+enum class HomingFail : std::uint8_t { None, ModeNotAdopted, DriveError, Timeout, Cancelled, DriveFault, NotOperational };
 const char* to_string(HomingState state) noexcept;
 const char* to_string(HomingFail fail) noexcept;
 
@@ -457,6 +457,9 @@ class ServoController : public SlaveControl {
     void select_drive_mode(Cia402Mode mode);
     bool await_homing();
     void finish_homing(HomingFail fail) noexcept;
+    // Publish a run's outcome and wake its caller, without touching the lifecycle: for a request
+    // that never reached the Homing state.
+    void publish_homing_result(HomingFail fail) noexcept;
     bool motion_slot_busy() const noexcept;  // a live (non-terminal) blocking move holds the slot
     // emergency_stopped() without the lock, for callers that already hold api_mutex_.
     bool estop_engaged() const noexcept;
