@@ -154,10 +154,16 @@ reaches `home_torque_percent`, backs off by `home_offset_mm` and calls that zero
 needs a rigid end stop and a threshold tuned at low speed. `get_position` and
 `move_to_position` are refused until `home()` has succeeded.
 
+Zero is the back-off point, not the stop, so `length_mm` is the travel from there and not the raw
+distance between the mechanical ends: with a 500 mm frame and `home_offset_mm` of 2, the usable
+length is 498. Raising `home_offset_mm` without lowering `length_mm` lets a move to `length_mm`
+run into the far end.
+
 The axis also counts as referenced when the motor answers `is_abs_enc_valid` positively, so a
 drive whose encoder retains position needs no homing run after a restart. The objects and the
 codes behind that answer are declared on the motor, not here; the axis only reads the verdict and
-caches it.
+caches it. The cache is dropped whenever the motor reports the bus went away, since the drive may
+have lost control power and, with it, a battery-backed encoder's count.
 
 | Attribute | Required | Default | Meaning |
 |---|---|---|---|

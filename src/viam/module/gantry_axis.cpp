@@ -135,8 +135,19 @@ bool GantryAxis::absolute_reference() {
     return abs_reference_;
 }
 
+// A bus drop may have taken the drive's control power with it, and an absolute encoder whose
+// battery is flat loses its count while dark. The cached verdict cannot see that, so forget it and
+// ask the drive again once it answers.
+void GantryAxis::note_connection(const ProtoStruct& status) {
+    if (flag(status, "is_disconnected")) {
+        abs_reference_ = false;
+    }
+}
+
 bool GantryAxis::homed() {
-    return flag(motor_status(), "homed") || absolute_reference();
+    const ProtoStruct status = motor_status();
+    note_connection(status);
+    return flag(status, "homed") || absolute_reference();
 }
 
 std::vector<double> GantryAxis::get_position(const ProtoStruct& extra) {
@@ -194,9 +205,11 @@ bool GantryAxis::home(const ProtoStruct& /*extra*/) {
 // both why a move was refused and what the drive is doing.
 ProtoStruct GantryAxis::get_status() {
     ProtoStruct status = motor_status();
-    const bool is_homed = flag(status, "homed") || absolute_reference();
+    note_connection(status);
+    const bool reference = absolute_reference();
+    const bool is_homed = flag(status, "homed") || reference;
     status.insert_or_assign("homed", ProtoValue(is_homed));
-    status.emplace("absolute_reference", ProtoValue(absolute_reference()));
+    status.emplace("absolute_reference", ProtoValue(reference));
     status.emplace("length_mm", ProtoValue(attrs_.length_mm));
     if (is_homed) {
         status.emplace("position_mm", ProtoValue(revs_to_mm(motor_->get_position({}))));

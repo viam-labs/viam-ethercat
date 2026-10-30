@@ -87,7 +87,8 @@ class GantryAxis final : public Gantry {
     // True once a homing run has succeeded this session, or when the configured absolute-encoder
     // object says the drive kept its reference across the restart.
     bool homed();
-    bool absolute_reference();  // asks the motor once, then caches a positive answer
+    bool absolute_reference();                        // asks the motor once, then caches a positive answer
+    void note_connection(const ProtoStruct& status);  // drops the cache when the bus went away
 
     Attributes attrs_;
     std::shared_ptr<Motor> motor_;
