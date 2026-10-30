@@ -11,6 +11,7 @@ Two motor models ship in one module:
 |---|---|
 | `viam:ethercat:servo` | any conformant CiA402 EtherCAT servo drive |
 | `viam:ethercat:a6-servo` | ANCTL A6-EC series drives (adds the A6's vendor fault-reset, sync-fault code, and position-stability move-completion, since the A6 ties statusword bit 10 high) |
+| `viam:ethercat:gantry` | one linear axis driven by one of the motors above (`rdk:component:gantry`) |
 
 ## Requirements
 
@@ -44,6 +45,8 @@ Add a motor component with one of the models above. Attributes:
 | `rt_priority` | no | 80 | SCHED_FIFO priority (1..99) |
 | `emergency_stop_fault_code` | no | none | 0x603F value the drive reports while its emergency-stop input is engaged (e.g. `"0xFF3A"`); while present, `status` reports `emergency_stop: true`, motion calls fail with "emergency stop engaged", and no automatic fault-reset edges are sent (the `fault_reset` do_command still works, for a drive that latches the stop) |
 | `quick_stop_decel_rpm_per_s` | no | 0 (not configured) | deceleration written to the drive's 0x6085: its quick stop, its E-stop input ramp, and in `profile` mode the module's own `stop()`; in `profile` mode the drive must hold 0x605A = 2 |
+| `absolute_encoder` | no | none | declares the drive object that says the encoder retains position, and the 0x603F codes that mean it lost it: `{"index": "0x2A9C", "sub": 4, "type": "u16", "equals": 2, "invalid_codes": ["0xFF3C", "0xFF3D", "0xFF0F"]}`; read by the `is_abs_enc_valid` verb |
+| `homing_torque_object` | no | none | drive object that bounds motor current during hard-stop homing, e.g. `{"index": "0x2A08", "sub": 0, "type": "u32", "units_per_percent": 10}`; the type and scale are the drive's own (read the object first -- a wrong width is refused); required for the `home` verb's `torque_percent` |
 | `max_acceleration_rpm_per_s` | no | `max_rpm` per second | ramp acceleration of the master-side trajectory in `csp`; ignored in `profile` |
 
 ### Control mode
@@ -118,14 +121,81 @@ matter:
   (`"log_configuration": {"level": "debug"}` on the motor). `debug` traces every SDO (object,
   payload, decoded abort) and AL state request during bring-up; `info` prints one line per
   bring-up phase and one per fault-code change.
+- `{"is_abs_enc_valid": true}` answers whether the drive's absolute encoder is set to retain position
+  and still holds it: `{"valid": true, "configured": true, "mode": 2, "fault_code": "0x0000", "warning": false}`, or
+  `valid: false` with a `reason`. Needs the `absolute_encoder` attribute; without it the answer is
+  false with that as the reason. The codes it treats as a lost reference are warnings on some drives,
+  so they never raise the fault bit and are read from the live 0x603F instead.
+- Hard-stop homing (CiA402 mode 6, methods -4 and -3): `{"home": {"direction": "negative", "speed_rpm": 20,
+  "torque_percent": 20, "offset_revolutions": 0.25, "acceleration_rpm_per_s": 100, "timeout_s": 120}}`. The
+  drive drives into the mechanical stop until motor current reaches the threshold, backs off by the offset
+  and calls that zero; the module clears its software zero with it. The call blocks for the run and replies
+  `{"homed": true}`, or `{"homed": false, "error": "..."}` when the drive reports a homing error or the run
+  times out. `status` carries `homed`, `homing` and, after a failure, `homing_error`.
 - Raw SDO access to manufacturer-specific objects (0x2000-0x5FFF) and 0x1010 (store parameters) for commissioning:
   `{"sdo_read": {"index": "0x2A9C", "sub": 4, "type": "u16"}}`,
   `{"sdo_write": {"index": "0x2A9C", "sub": 4, "type": "u16", "value": 2}}`. Types `u8 i8 u16 i16 u32 i32
   string bytes`; values are numbers or `"0x.."` / hex-byte strings. A drive refusal returns
   `{"ok": false, "abort_code": "0x06090030", "error": "..."}`; writes are refused while the motor moves.
-- `do_command` verbs: `status`, `fault_reset`, `enable`, `disable`,
+- `do_command` verbs: `status`, `fault_reset`, `enable`, `disable`, `home`, `is_abs_enc_valid`,
   `get_motor_voltage`, `get_motor_current_actual_value`,
   `get_motor_drive_modes`.
+
+## Single-axis gantry
+
+`viam:ethercat:gantry` turns one of the motors above into a linear axis: it owns the travel
+length, the millimetre scale and the bound that keeps a move inside the axis, and drives the
+motor through the standard motor API. It depends on the motor component and never opens the bus
+itself. It refuses to build if its dependency is not a `viam:ethercat` servo, since it needs this
+module's homing contract.
+
+There are no limit switches. Homing drives into a mechanical hard stop until motor current
+reaches `home_torque_percent`, backs off by `home_offset_mm` and calls that zero, so the axis
+needs a rigid end stop and a threshold tuned at low speed. `get_position` and
+`move_to_position` are refused until `home()` has succeeded.
+
+Zero is the back-off point, not the stop, so `length_mm` is the travel from there and not the raw
+distance between the mechanical ends: with a 500 mm frame and `home_offset_mm` of 2, the usable
+length is 498. Raising `home_offset_mm` without lowering `length_mm` lets a move to `length_mm`
+run into the far end.
+
+The axis also counts as referenced when the motor answers `is_abs_enc_valid` positively, so a
+drive whose encoder retains position needs no homing run after a restart. The objects and the
+codes behind that answer are declared on the motor, not here; the axis only reads the verdict and
+caches it. The cache is dropped whenever the motor reports the bus went away, since the drive may
+have lost control power and, with it, a battery-backed encoder's count.
+
+| Attribute | Required | Default | Meaning |
+|---|---|---|---|
+| `motor` | yes | — | name of the axis motor (also list it in `depends_on`) |
+| `length_mm` | yes | — | travel length of the axis |
+| `mm_per_rev` | yes | — | linear travel per motor revolution |
+| `gantry_mm_per_sec` | no | 0 | default speed when a move does not give one |
+| `home_direction` | no | `negative` | `negative` homes into the negative stop (method -4), `positive` into the other (-3) |
+| `home_mm_per_sec` | yes | — | approach speed of the homing move |
+| `home_accel_mm_per_sec2` | no | 0 (drive's own) | homing acceleration |
+| `home_torque_percent` | no | 0 (drive's own) | contact threshold, needs `homing_torque_object` on the motor |
+| `home_offset_mm` | no | 0 | back-off from the stop; the axis zero |
+| `home_timeout_s` | no | 120 | the home fails if the drive has not attained it by then |
+
+```json
+{
+  "name": "x-axis",
+  "api": "rdk:component:gantry",
+  "model": "viam:ethercat:gantry",
+  "attributes": {
+    "motor": "x-motor",
+    "length_mm": 500,
+    "mm_per_rev": 40,
+    "gantry_mm_per_sec": 50,
+    "home_direction": "negative",
+    "home_mm_per_sec": 5,
+    "home_torque_percent": 20,
+    "home_offset_mm": 2
+  },
+  "depends_on": ["x-motor"]
+}
+```
 
 ## Third-party code
 
