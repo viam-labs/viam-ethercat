@@ -31,6 +31,22 @@ class GantryAxis final : public Gantry {
     // Validator: parses the attributes and returns the motor as this axis's dependency.
     static std::vector<std::string> validate(const ResourceConfig& cfg);
 
+    // Attributes. Nothing about homing: the motor owns the whole procedure and answers `home` with
+    // the position it ended at, which is this axis's zero.
+    struct Attributes {
+        std::string motor;
+        double length_mm = 0.0;
+        double mm_per_rev = 0.0;
+        double mm_per_sec = 0.0;  // default move speed; 0 = a speed is required per move
+        bool travel_positive = true;
+        // Contents of `kinematics_file`, served verbatim as SVA. Empty = no kinematics: the frame
+        // system then sees the axis as a fixed frame, which is what a gantry without a file gets.
+        std::vector<unsigned char> kinematics;
+    };
+    // Reads the attributes, including the kinematics file. Public so the parser is testable
+    // without a motor to depend on.
+    static Attributes parse(const ResourceConfig& cfg);
+
     GantryAxis(const Dependencies& deps, const ResourceConfig& cfg);
 
     GantryAxis(const GantryAxis&) = delete;
@@ -52,16 +68,6 @@ class GantryAxis final : public Gantry {
     KinematicsData get_kinematics(const ProtoStruct& extra) override;
 
    private:
-    // Attributes. Nothing about homing: the motor owns the whole procedure and answers `home` with
-    // the position it ended at, which is this axis's zero.
-    struct Attributes {
-        std::string motor;
-        double length_mm = 0.0;
-        double mm_per_rev = 0.0;
-        double mm_per_sec = 0.0;  // default move speed; 0 = a speed is required per move
-        bool travel_positive = true;
-    };
-    static Attributes parse(const ResourceConfig& cfg);
     // Resolve the attributes and the motor dependency. Called from the constructor: the SDK has no
     // reconfigure hook, so a config change builds a new component.
     void configure(const Dependencies& deps, const ResourceConfig& cfg);

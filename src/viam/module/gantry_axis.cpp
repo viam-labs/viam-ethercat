@@ -1,6 +1,8 @@
 #include "viam/module/gantry_axis.hpp"
 
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <utility>
 
@@ -16,6 +18,28 @@ using attrs::find_attr;
 using attrs::flag;
 using attrs::nested;
 using attrs::opt_num;
+
+namespace {
+
+// The whole file, unparsed. The RDK is the consumer of the SVA document (it builds the frame-system
+// model from it), so the only checks worth making here are the ones that would otherwise surface
+// as an opaque planner error later: the file must exist and must not be empty.
+std::vector<unsigned char> read_kinematics_file(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        throw Error("config attribute 'kinematics_file': cannot open '" + path + "'");
+    }
+    std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (in.bad()) {
+        throw Error("config attribute 'kinematics_file': cannot read '" + path + "'");
+    }
+    if (bytes.empty()) {
+        throw Error("config attribute 'kinematics_file': '" + path + "' is empty");
+    }
+    return bytes;
+}
+
+}  // namespace
 
 Model GantryAxis::model() {
     return {ServoMotor::model_family(), "gantry"};
@@ -49,6 +73,14 @@ GantryAxis::Attributes GantryAxis::parse(const ResourceConfig& cfg) {
             throw Error("config attribute 'travel_direction' must be \"negative\" or \"positive\"");
         }
         out.travel_positive = *d == "positive";
+    }
+    const ProtoValue* const kin = find_attr(a, "kinematics_file");
+    if (kin != nullptr) {
+        const std::string* const path = kin->get<std::string>();
+        if (path == nullptr || path->empty()) {
+            throw Error("config attribute 'kinematics_file' must be a non-empty string");
+        }
+        out.kinematics = read_kinematics_file(*path);
     }
     return out;
 }
@@ -191,7 +223,10 @@ std::vector<GeometryConfig> GantryAxis::get_geometries(const ProtoStruct& /*extr
 }
 
 KinematicsData GantryAxis::get_kinematics(const ProtoStruct& /*extra*/) {
-    return KinematicsDataUnspecified{};
+    if (attrs_.kinematics.empty()) {
+        return KinematicsDataUnspecified{};
+    }
+    return KinematicsDataSVA{attrs_.kinematics};
 }
 
 }  // namespace ethercat::servo
