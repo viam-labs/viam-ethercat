@@ -245,38 +245,26 @@ endif()
 #
 
 if (ETHERCAT_BUILD_MODULE)
-  # The component models, apart from the entrypoint, so a test can link them
-  # without a module process.
-  add_library(ethercat-servo-models STATIC
-    src/viam/module/gantry_axis.cpp
-    src/viam/module/servo_motor.cpp
-  )
-  target_link_libraries(ethercat-servo-models
-    PUBLIC
-      ethercat
-      viam-cpp-sdk::viamapi # Proxy for gRPC
-      viam-cpp-sdk::viamsdk
+  # The component models, apart from the entrypoint, so a test can link them without a module
+  # process. Whatever links them includes the SDK headers, so their build flags are PUBLIC.
+  add_library(ethercat-servo-models STATIC src/viam/module/gantry_axis.cpp src/viam/module/servo_motor.cpp)
+  target_link_libraries(ethercat-servo-models PUBLIC ethercat viam-cpp-sdk::viamapi viam-cpp-sdk::viamsdk)
+  viam_apply_wall_werror(ethercat-servo-models)
+  # Tell boost::dll to use std::filesystem rather than boost::filesystem.
+  target_compile_definitions(ethercat-servo-models PUBLIC BOOST_DLL_USE_STD_FS)
+  # The Viam SDK's logging header (boost::log -> boost::mpl) trips clang-19's
+  # -Wenum-constexpr-conversion (boostorg/mpl#69; UR carries the same flag), and gcc 14 at -O2
+  # reports a false-positive null-dereference from boost::asio's scheduler.ipp inlined into
+  # main.cpp, which escapes system-header suppression. Demoted on the SDK-linked targets ONLY,
+  # NOT in viam_apply_wall_werror, so genuine cases still fail our library TUs.
+  target_compile_options(ethercat-servo-models PUBLIC
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-enum-constexpr-conversion>
+    $<$<CXX_COMPILER_ID:GNU>:-Wno-error=null-dereference>
   )
 
   add_executable(ethercat-servo src/viam/module/main.cpp)
   target_link_libraries(ethercat-servo PRIVATE ethercat-servo-models)
-
-  foreach(target ethercat-servo-models ethercat-servo)
-    # Tell boost::dll to use std::filesystem rather than boost::filesystem.
-    target_compile_definitions(${target} PRIVATE BOOST_DLL_USE_STD_FS)
-    viam_apply_wall_werror(${target})
-    # The Viam SDK's logging header (boost::log -> boost::mpl) trips clang-19's
-    # -Wenum-constexpr-conversion. Suppress it ONLY on the SDK-linked module targets,
-    # NOT in viam_apply_wall_werror -- so genuine enum-constexpr issues in our library
-    # TUs still fail. Known boost-mpl issue (boostorg/mpl#69); UR carries the same flag.
-    target_compile_options(${target} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-enum-constexpr-conversion>)
-    # gcc 14 (at -O2) reports a known false-positive null-dereference from
-    # boost::asio's scheduler.ipp when its epoll reactor code is inlined into
-    # main.cpp -- the warning escapes system-header suppression because it fires
-    # during inlining. Demote just that warning, GNU-only, module-target-only, so
-    # -Wnull-dereference keeps failing our library TUs everywhere else.
-    target_compile_options(${target} PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wno-error=null-dereference>)
-  endforeach()
+  viam_apply_wall_werror(ethercat-servo)
 
   # DEPLOYMENT runtime story (#TODO-9): statically link libstdc++ + libgcc INTO the
   # shipped module binary. The module is built on noble (gcc-13/14 libstdc++ 13) but
@@ -339,7 +327,6 @@ viam_add_test(servo_config_test tests/servo_config_test.cpp)
 if (ETHERCAT_BUILD_MODULE)
   viam_add_test(gantry_axis_test tests/gantry_axis_test.cpp)
   target_link_libraries(gantry_axis_test PRIVATE ethercat-servo-models)
-  target_compile_options(gantry_axis_test PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-enum-constexpr-conversion>)
 endif()
 
 # ThreadSanitizer build of the RT-boundary test. Compiles the pdo_cache TU

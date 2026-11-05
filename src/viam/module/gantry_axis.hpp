@@ -39,12 +39,10 @@ class GantryAxis final : public Gantry {
         double mm_per_rev = 0.0;
         double mm_per_sec = 0.0;  // default move speed; 0 = a speed is required per move
         bool travel_positive = true;
-        // Contents of `kinematics_file`, served verbatim as SVA. Empty = no kinematics: the frame
-        // system then sees the axis as a fixed frame, which is what a gantry without a file gets.
+        // Contents of `kinematics_file`, served verbatim as SVA. Empty = fixed frame, as without a file.
         std::vector<unsigned char> kinematics;
     };
-    // Reads the attributes, including the kinematics file. Public so the parser is testable
-    // without a motor to depend on.
+    // Public so the parser is testable without a motor to depend on.
     static Attributes parse(const ResourceConfig& cfg);
 
     GantryAxis(const Dependencies& deps, const ResourceConfig& cfg);

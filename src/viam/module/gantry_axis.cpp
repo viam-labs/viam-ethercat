@@ -21,20 +21,13 @@ using attrs::opt_num;
 
 namespace {
 
-// The whole file, unparsed. The RDK is the consumer of the SVA document (it builds the frame-system
-// model from it), so the only checks worth making here are the ones that would otherwise surface
-// as an opaque planner error later: the file must exist and must not be empty.
+// The whole file, unparsed: the RDK builds the frame-system model from it. Only what would otherwise
+// surface as an opaque planner error later is checked here.
 std::vector<unsigned char> read_kinematics_file(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw Error("config attribute 'kinematics_file': cannot open '" + path + "'");
-    }
     std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (in.bad()) {
-        throw Error("config attribute 'kinematics_file': cannot read '" + path + "'");
-    }
-    if (bytes.empty()) {
-        throw Error("config attribute 'kinematics_file': '" + path + "' is empty");
+    if (!in || bytes.empty()) {
+        throw Error("config attribute 'kinematics_file': '" + path + "' is missing or empty");
     }
     return bytes;
 }
@@ -74,12 +67,7 @@ GantryAxis::Attributes GantryAxis::parse(const ResourceConfig& cfg) {
         }
         out.travel_positive = *d == "positive";
     }
-    const ProtoValue* const kin = find_attr(a, "kinematics_file");
-    if (kin != nullptr) {
-        const std::string* const path = kin->get<std::string>();
-        if (path == nullptr || path->empty()) {
-            throw Error("config attribute 'kinematics_file' must be a non-empty string");
-        }
+    if (const auto path = attrs::opt_attr<std::string>(a, "kinematics_file")) {
         out.kinematics = read_kinematics_file(*path);
     }
     return out;

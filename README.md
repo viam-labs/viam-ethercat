@@ -221,13 +221,12 @@ zero and no run is needed.
 ### Kinematics
 
 Without `kinematics_file` the frame system sees the axis as a fixed frame: nothing attached to
-it moves when the carriage does, and motion planning cannot drive it. Give it a
+it moves with the carriage, and motion planning cannot drive it. Point it at a
 [Viam SVA kinematics file](https://docs.viam.com/operate/reference/kinematic-chain-config/)
-describing one prismatic joint and the module serves the file unchanged; the RDK builds the
-model from it. The file must exist when the component is configured, and its joint must agree
-with the axis: `min` of `0`, `max` equal to `length_mm`, since the gantry's position in
-millimetres is fed straight in as the joint value. The joint's `axis` is the only place the
-travel direction in space is described, so set it to the real one.
+with one prismatic joint; the module serves the file unchanged and the RDK builds the model.
+The file must exist when the component is configured, and its joint must match the axis: `min`
+of `0` and `max` equal to `length_mm`, since the gantry's millimetre position is the joint value,
+and `axis` set to the real travel direction, which is described nowhere else.
 
 ```json
 {
@@ -235,22 +234,11 @@ travel direction in space is described, so set it to the real one.
   "kinematic_param_type": "SVA",
   "links": [
     { "id": "base", "parent": "world", "translation": { "x": 0, "y": 0, "z": 0 } },
-    {
-      "id": "carriage",
-      "parent": "x-axis_joint",
-      "translation": { "x": 0, "y": 0, "z": 0 },
-      "geometry": { "x": 25, "y": 25, "z": 10, "translation": { "x": 0, "y": 0, "z": 10 } }
-    }
+    { "id": "carriage", "parent": "x-axis_joint", "translation": { "x": 0, "y": 0, "z": 0 },
+      "geometry": { "x": 25, "y": 25, "z": 10, "translation": { "x": 0, "y": 0, "z": 10 } } }
   ],
   "joints": [
-    {
-      "id": "x-axis_joint",
-      "type": "prismatic",
-      "parent": "base",
-      "axis": { "x": 1, "y": 0, "z": 0 },
-      "min": 0,
-      "max": 500
-    }
+    { "id": "x-axis_joint", "type": "prismatic", "parent": "base", "axis": { "x": 1, "y": 0, "z": 0 }, "min": 0, "max": 500 }
   ]
 }
 ```
