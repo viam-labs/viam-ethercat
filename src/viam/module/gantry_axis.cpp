@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
 #include "ethercat/errors.hpp"
@@ -197,7 +198,16 @@ bool GantryAxis::is_moving() {
 }
 
 void GantryAxis::stop(const ProtoStruct& extra) {
-    motor_->stop(extra);
+    // The motor's own stop is a halt that cannot fail, so the only thing that can throw here is the
+    // RPC to reach it: the motor is gone or going. That is what happens on every shutdown, where the
+    // RDK stops this axis as it removes it and removes the motor in the same sweep. A motor that is
+    // already gone has nothing left to stop (its own close halts the drive), and letting the error
+    // out would fail the whole removal, which the RDK reports as a fatal shutdown.
+    try {
+        motor_->stop(extra);
+    } catch (const std::exception& e) {
+        VIAM_RESOURCE_LOG(warn) << "stop: motor '" << attrs_.motor << "' is unreachable, nothing left to stop (" << e.what() << ")";
+    }
 }
 
 ProtoStruct GantryAxis::do_command(const ProtoStruct& command) {
